@@ -52,6 +52,14 @@ BASE_PORTAL = "https://portalcontribuinte.sefin.ro.gov.br/"
 DIAS_MAX_FUTURO_DARE = 30
 
 # =========================================================
+# DARE: “caber na página” (estilo do seu exemplo)
+# =========================================================
+MARGEM_DARE_MM = 6
+ZOOM_DARE_2VIAS = 0.92           # se quebrar: 0.90 / 0.88
+LOGO_MAX_WIDTH_PX = 110
+LOGO_MAX_HEIGHT_PX = 50
+
+# =========================================================
 # HELPERS
 # =========================================================
 def _slug(s: str) -> str:
@@ -364,12 +372,16 @@ def resolver_captcha_automatico(img_bytes: bytes) -> Optional[str]:
         except Exception:
             pass
 
-def carregar_html_dare_final(sess: requests.Session, url_dare: str, max_tentativas: int = 3) -> str:
+def carregar_html_dare_final(sess: requests.Session, url_dare: str, max_tentativas: int = 5) -> str:
+    """
+    ✅ Agora com 5 tentativas (como você pediu)
+    """
     for _ in range(max_tentativas):
         r = sess.get(url_dare, timeout=30, allow_redirects=True)
         if r.status_code != 200:
             raise RuntimeError(f"Falha ao abrir DARE: HTTP {r.status_code}")
 
+        # guia final (sem captcha)
         if "copy-cb" in r.text:
             return r.text
 
@@ -419,16 +431,9 @@ def carregar_html_dare_final(sess: requests.Session, url_dare: str, max_tentativ
     raise RuntimeError("Não foi possível emitir o DARE (CAPTCHA).")
 
 # =========================================================
-# PDF via Playwright (Render)
+# PDF via Playwright (Render)  ✅ sem base_url no set_content
 # =========================================================
 def html_para_pdf_playwright(html: str, pdf_path: str):
-    """
-    CORREÇÃO:
-    - Removido base_url do page.set_content(), pois em algumas versões do Playwright
-      esse argumento não existe e gera:
-      'Page.set_content() got an unexpected keyword argument base_url'
-    - Você já injeta <base href="..."> no HTML e/ou absolutiza os recursos.
-    """
     os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -436,7 +441,10 @@ def html_para_pdf_playwright(html: str, pdf_path: str):
             args=["--no-sandbox", "--disable-dev-shm-usage"]
         )
         page = browser.new_page()
+
+        # ✅ Compatível: NÃO passa base_url aqui
         page.set_content(html, wait_until="load")
+
         page.pdf(path=pdf_path, format="A4", print_background=True)
         browser.close()
 
@@ -463,6 +471,187 @@ def merge_pdfs(pdf_paths: List[str], output_path: str):
     with open(output_path, "wb") as f:
         writer.write(f)
 
+# =========================================================
+# DARE: preparar "caber na página" (2 vias / zoom / logo / barcode)
+# =========================================================
+def _remover_textos_menu(soup: BeautifulSoup):
+    for txt in ["Voltar", "Imprimir", "COPIAR CÓDIGO DE BARRAS", "COPIAR QR CODE PIX"]:
+        for node in soup.find_all(string=re.compile(re.escape(txt), re.I)):
+            p = node.find_parent(["a", "button", "div", "span"])
+            if p:
+                try:
+                    p.decompose()
+                except Exception:
+                    pass
+
+def _neutralizar_pagebreaks(soup: BeautifulSoup):
+    for tag in soup.find_all(True):
+        st = (tag.get("style") or "")
+        cls = " ".join(tag.get("class") or [])
+        if "page-break" in st.lower() or "break-after" in st.lower() or "pagebreak" in cls.lower():
+            try:
+                tag["style"] = re.sub(r"page-break-[^;]+;?", "", st, flags=re.I)
+                tag["style"] = re.sub(r"break-[^;]+;?", "", tag.get("style",""), flags=re.I)
+            except Exception:
+                pass
+
+def _marcar_primeira_img_como_logo(soup: BeautifulSoup):
+    for img in soup.find_all("img"):
+        src = (img.get("src") or "").strip()
+        if not src:
+            continue
+        classes = img.get("class") or []
+        if "logo-sefin" not in classes:
+            classes.append("logo-sefin")
+        img["class"] = classes
+        break
+
+def _centralizar_barcodes(soup: BeautifulSoup):
+    padrao = re.compile(r"\b\d{11}\s+\d{12}\s+\d{12}\s+\d{12}\b")
+    for node in soup.find_all(string=padrao):
+        parent = node.find_parent(["td", "div", "p", "span"])
+        if parent:
+            st = parent.get("style") or ""
+            parent["style"] = (st + ";text-align:center;").strip(";")
+
+    for tag in soup.find_all(["img", "svg"]):
+        src = (tag.get("src") or "").lower()
+        if tag.name == "svg" or ("barra" in src) or ("barcode" in src) or ("codigo" in src) or ("qrcode" in src):
+            st = tag.get("style") or ""
+            tag["style"] = (st + ";display:block;margin:0 auto;").strip(";")
+            p = tag.find_parent(["td","div","p","span"])
+            if p:
+                pst = p.get("style") or ""
+                p["style"] = (pst + ";text-align:center;").strip(";")
+
+def _extrair_bloco_via(soup: BeautifulSoup, regex_alvo: str, regex_proibido: str) -> Optional[str]:
+    alvo = re.compile(regex_alvo, re.I)
+    proib = re.compile(regex_proibido, re.I)
+
+    node = soup.find(string=alvo)
+    if not node:
+        return None
+
+    cur = node
+    candidates = []
+    for _ in range(18):
+        cur = cur.parent if hasattr(cur, "parent") else None
+        if not cur or not getattr(cur, "name", None):
+            break
+        if cur.name in ("table","div","section","article"):
+            txt = cur.get_text(" ", strip=True)
+            if len(txt) < 200:
+                continue
+            if proib.search(txt):
+                continue
+            candidates.append(cur)
+
+    if not candidates:
+        parent = node.find_parent(["table","div","section","article"])
+        if parent:
+            txt = parent.get_text(" ", strip=True)
+            if len(txt) >= 200 and not proib.search(txt):
+                return str(parent)
+        return None
+
+    best = min(candidates, key=lambda t: len(t.get_text(" ", strip=True)))
+    return str(best)
+
+def preparar_dare_duas_vias(html_dare_final: str) -> str:
+    """
+    Tenta extrair Via Banco e Via Usuário (2 vias) e montar em 1 página,
+    aplicando recursos absolutos.
+    """
+    soup = BeautifulSoup(html_dare_final, "lxml")
+    _remover_textos_menu(soup)
+    _neutralizar_pagebreaks(soup)
+    _marcar_primeira_img_como_logo(soup)
+    _centralizar_barcodes(soup)
+
+    via_banco = _extrair_bloco_via(
+        soup,
+        r"Autenticação\s*mecânica\s*/\s*Via\s*banco",
+        r"Autenticação\s*mecânica\s*/\s*Via\s*Usu[aá]rio",
+    )
+    via_usuario = _extrair_bloco_via(
+        soup,
+        r"Autenticação\s*mecânica\s*/\s*Via\s*Usu[aá]rio",
+        r"Autenticação\s*mecânica\s*/\s*Via\s*banco",
+    )
+
+    if via_banco and via_usuario:
+        body = f"""
+<div class="vias">
+  <div class="via">{via_banco}</div>
+  <div class="corte">------------------------------------ corte aqui ------------------------------------</div>
+  <div class="via">{via_usuario}</div>
+</div>
+"""
+        return absolutizar_recursos(body, BASE_DARE)
+
+    # fallback: corpo inteiro
+    body = soup.body.decode_contents() if soup.body else str(soup)
+    return absolutizar_recursos(body, BASE_DARE)
+
+def montar_html_dare_1_pagina(body_dare_2vias: str) -> str:
+    """
+    HTML final do DARE: 2 vias + zoom + logo menor + evitar quebra.
+    """
+    return f"""<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<base href="{BASE_DARE}">
+<style>
+  * {{ box-sizing: border-box; }}
+  @page {{ size: A4 portrait; margin: {MARGEM_DARE_MM}mm; }}
+  html, body {{ margin:0; padding:0; }}
+  body {{ overflow: visible !important; }}
+
+  /* evita quebra antes do conteúdo */
+  body > *:first-child {{
+    break-before: avoid !important;
+    page-break-before: avoid !important;
+  }}
+
+  .via {{ zoom: {ZOOM_DARE_2VIAS}; transform-origin: top center; }}
+  .corte {{
+    text-align:center;
+    font: 10px/1.2 Arial, sans-serif;
+    opacity:.8;
+    margin: 2mm 0;
+    white-space: nowrap;
+  }}
+
+  img.logo-sefin {{
+    max-width: {LOGO_MAX_WIDTH_PX}px !important;
+    max-height: {LOGO_MAX_HEIGHT_PX}px !important;
+    width: auto !important;
+    height: auto !important;
+    display: block;
+    margin: 2px auto !important;
+  }}
+
+  img[src*="barra"], img[src*="barcode"], svg {{
+    display:block;
+    margin:0 auto;
+  }}
+
+  .via, .via * {{
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }}
+</style>
+</head>
+<body>
+{body_dare_2vias}
+</body>
+</html>
+"""
+
+# =========================================================
+# PDF DARE + EXTRATO
+# =========================================================
 def gerar_pdf_dare_e_extrato(sess: requests.Session, deb: Dict[str, str], pasta: str) -> Optional[str]:
     venc_txt = (deb.get("data_vencimento") or "").strip()
     venc_date = parse_data_br(venc_txt)
@@ -481,20 +670,22 @@ def gerar_pdf_dare_e_extrato(sess: requests.Session, deb: Dict[str, str], pasta:
     nome = _safe_filename(f"DARE_{venc_txt.replace('/','-')}_{receita}_{valor}.pdf")
     out_pdf = os.path.join(pasta, nome)
 
-    html_dare_final = carregar_html_dare_final(sess, url_dare)
+    # 1) pega HTML final (com captcha até 5 tentativas)
+    html_dare_final = carregar_html_dare_final(sess, url_dare, max_tentativas=5)
 
-    dare_body = BeautifulSoup(html_dare_final, "lxml").body
-    dare_body_html = absolutizar_recursos(dare_body.decode_contents() if dare_body else html_dare_final, BASE_DARE)
-    dare_html = f"""<!doctype html><html><head><meta charset="utf-8"><base href="{BASE_DARE}"></head>
-    <body>{dare_body_html}</body></html>"""
+    # 2) prepara 2 vias + CSS para caber em 1 página
+    body_dare_2vias = preparar_dare_duas_vias(html_dare_final)
+    dare_html = montar_html_dare_1_pagina(body_dare_2vias)
 
     tmp_dare = os.path.join(pasta, "__tmp_dare.pdf")
     html_para_pdf_playwright(dare_html, tmp_dare)
 
+    # sem extrato: só DARE
     if not url_ext:
         os.replace(tmp_dare, out_pdf)
         return out_pdf
 
+    # com extrato: render normal e faz merge
     r_ext = sess.get(url_ext, timeout=30, allow_redirects=True)
     if r_ext.status_code != 200:
         os.replace(tmp_dare, out_pdf)
@@ -503,7 +694,7 @@ def gerar_pdf_dare_e_extrato(sess: requests.Session, deb: Dict[str, str], pasta:
     ext_body = BeautifulSoup(r_ext.text, "lxml").body
     ext_body_html = absolutizar_recursos(ext_body.decode_contents() if ext_body else r_ext.text, BASE_PORTAL)
     ext_html = f"""<!doctype html><html><head><meta charset="utf-8"><base href="{BASE_PORTAL}"></head>
-    <body>{ext_body_html}</body></html>"""
+<body>{ext_body_html}</body></html>"""
 
     tmp_ext = os.path.join(pasta, "__tmp_ext.pdf")
     html_para_pdf_playwright(ext_html, tmp_ext)
