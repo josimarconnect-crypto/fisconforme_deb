@@ -72,7 +72,7 @@ def supabase_headers(is_json: bool = False) -> Dict[str, str]:
 
 def carregar_certificados_validos(user_filter: str) -> List[Dict[str, Any]]:
     url = f"{SUPABASE_URL}/rest/v1/{TABELA_CERTS}"
-    params: Dict[str, str] = {'select': 'id,pem,key,empresa,codi,user,vencimento,"cnpj/cpf"'}
+    params: Dict[str, str] = {"select": 'id,pem,key,empresa,codi,user,vencimento,"cnpj/cpf"'}
     params["user"] = f"eq.{user_filter}"
     r = requests.get(url, headers=supabase_headers(), params=params, timeout=30)
     r.raise_for_status()
@@ -88,22 +88,26 @@ def criar_arquivos_cert_temp(cert_row: Dict[str, Any]) -> Tuple[str, str]:
 
     cert_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pem")
     key_file = tempfile.NamedTemporaryFile(delete=False, suffix=".key")
-    cert_file.write(pem_bytes); cert_file.close()
-    key_file.write(key_bytes); key_file.close()
+    cert_file.write(pem_bytes)
+    cert_file.close()
+    key_file.write(key_bytes)
+    key_file.close()
     return cert_file.name, key_file.name
 
 
 def criar_sessao(cert_path: str, key_path: str) -> requests.Session:
     s = requests.Session()
     s.cert = (cert_path, key_path)
-    s.headers.update({
-        "User-Agent": (
-            "Mozilla/5.0 (X11; Linux x86_64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        ),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    })
+    s.headers.update(
+        {
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        }
+    )
     return s
 
 
@@ -149,7 +153,10 @@ def extrair_form_logintoken(html: str) -> Tuple[Optional[str], Optional[Dict[str
 
 
 def extrair_redirect_do_logintoken(html: str) -> Optional[str]:
-    m = re.search(r"location\s*=\s*['\"](https://portalcontribuinte\.sefin\.ro\.gov\.br[^'\"]+)['\"]", html)
+    m = re.search(
+        r"location\s*=\s*['\"](https://portalcontribuinte\.sefin\.ro\.gov\.br[^'\"]+)['\"]",
+        html,
+    )
     if m:
         return m.group(1)
     m = re.search(r"location\.href\s*=\s*['\"](/app/home[^'\"]*)['\"]", html)
@@ -234,9 +241,9 @@ def obter_pendencias_fisconforme(html_fis: str) -> List[Dict[str, str]]:
         if len(cols) < 5:
             continue
         codigo, ie, nome, periodo, descricao = cols[:5]
-        pendencias.append({
-            "codigo": codigo, "ie": ie, "nome": nome, "periodo": periodo, "descricao": descricao
-        })
+        pendencias.append(
+            {"codigo": codigo, "ie": ie, "nome": nome, "periodo": periodo, "descricao": descricao}
+        )
     return pendencias
 
 
@@ -296,21 +303,23 @@ def obter_debitos_inscricao_estadual(html_deb: str) -> List[Dict[str, str]]:
                 return href
             return requests.compat.urljoin(URL_CONSULTA_DEBITOS_LISTA, href)
 
-        debitos.append({
-            "dare": txt(0),
-            "extrato": txt(1),
-            "nr_lancamento": txt(2),
-            "parcela": txt(3),
-            "referencia": txt(4),
-            "complemento": txt(5),
-            "receita": txt(6),
-            "situacao": txt(7),
-            "data_vencimento": txt(8),
-            "valor_lancamento": txt(9),
-            "valor_atualizado": txt(10),
-            "url_dare": norm_url(link_dare.get("href") if link_dare else ""),
-            "url_extrato": norm_url(link_extrato.get("href") if link_extrato else ""),
-        })
+        debitos.append(
+            {
+                "dare": txt(0),
+                "extrato": txt(1),
+                "nr_lancamento": txt(2),
+                "parcela": txt(3),
+                "referencia": txt(4),
+                "complemento": txt(5),
+                "receita": txt(6),
+                "situacao": txt(7),
+                "data_vencimento": txt(8),
+                "valor_lancamento": txt(9),
+                "valor_atualizado": txt(10),
+                "url_dare": norm_url(link_dare.get("href") if link_dare else ""),
+                "url_extrato": norm_url(link_extrato.get("href") if link_extrato else ""),
+            }
+        )
 
     return debitos
 
@@ -470,7 +479,7 @@ def gerar_pdf_dare_e_extrato(sess: requests.Session, deb: Dict[str, str], pasta:
             return None
 
     url_dare = (deb.get("url_dare") or "").strip()
-    url_ext  = (deb.get("url_extrato") or "").strip()
+    url_ext = (deb.get("url_extrato") or "").strip()
     if not url_dare:
         return None
 
@@ -482,9 +491,13 @@ def gerar_pdf_dare_e_extrato(sess: requests.Session, deb: Dict[str, str], pasta:
     html_dare_final = carregar_html_dare_final(sess, url_dare)
 
     dare_body = BeautifulSoup(html_dare_final, "lxml").body
-    dare_body_html = absolutizar_recursos(dare_body.decode_contents() if dare_body else html_dare_final, BASE_DARE)
-    dare_html = f"""<!doctype html><html><head><meta charset="utf-8"><base href="{BASE_DARE}"></head>
-    <body>{dare_body_html}</body></html>"""
+    dare_body_html = absolutizar_recursos(
+        dare_body.decode_contents() if dare_body else html_dare_final, BASE_DARE
+    )
+    dare_html = (
+        f'<!doctype html><html><head><meta charset="utf-8"><base href="{BASE_DARE}"></head>'
+        f"<body>{dare_body_html}</body></html>"
+    )
 
     tmp_dare = os.path.join(pasta, "__tmp_dare.pdf")
     html_para_pdf_playwright(dare_html, tmp_dare, base_url=BASE_DARE)
@@ -500,8 +513,10 @@ def gerar_pdf_dare_e_extrato(sess: requests.Session, deb: Dict[str, str], pasta:
 
     ext_body = BeautifulSoup(r_ext.text, "lxml").body
     ext_body_html = absolutizar_recursos(ext_body.decode_contents() if ext_body else r_ext.text, BASE_PORTAL)
-    ext_html = f"""<!doctype html><html><head><meta charset="utf-8"><base href="{BASE_PORTAL}"></head>
-    <body>{ext_body_html}</body></html>"""
+    ext_html = (
+        f'<!doctype html><html><head><meta charset="utf-8"><base href="{BASE_PORTAL}"></head>'
+        f"<body>{ext_body_html}</body></html>"
+    )
 
     tmp_ext = os.path.join(pasta, "__tmp_ext.pdf")
     html_para_pdf_playwright(ext_html, tmp_ext, base_url=BASE_PORTAL)
@@ -620,44 +635,18 @@ def fluxo_fisconforme(cert_row: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # =========================================================
-# FASTAPI
+# ZIP DE DARES (✅ CORRIGIDO: tudo dentro da função)
 # =========================================================
-app = FastAPI(title="API FisConforme + DARE (Render)")
-
-# ✅ CORS: libera inclusive origem "null" (HTML aberto via file://)
-# (allow_origin_regex pega qualquer Origin)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origin_regex=".*",
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-@app.get("/")
-def root():
-    # simples — útil pra você testar no browser
-    return {"ok": True, "date": str(date.today()), "routes": ["/health", "/fisconforme", "/dare", "/dares"]}
-
-@app.get("/health")
-def health():
-    return {"ok": True, "date": str(date.today())}
-
-@app.get("/fisconforme")
-def route_fisconforme(user: str = Query(..., description="E-mail do campo user na certifica_dfe")):
-    certs = carregar_certificados_validos(user)
-    results = [fluxo_fisconforme(c) for c in certs]
-    return {"ok": True, "user": user, "total_empresas": len(results), "results": results}
-
 def gerar_zip_dares(user: str) -> Tuple[str, str]:
     certs = carregar_certificados_validos(user)
     if not certs:
         raise RuntimeError("Nenhuma empresa para este user.")
 
-tmpdir = tempfile.gettempdir()  # /tmp no Render
-zip_name = f"dares_{re.sub(r'[^a-zA-Z0-9]+','_',user)}_{date.today().isoformat()}_{int(time.time())}.zip"
-zip_path = os.path.join(tmpdir, zip_name)
-
+    tmpdir = tempfile.gettempdir()  # /tmp no Render
+    zip_name = (
+        f"dares_{re.sub(r'[^a-zA-Z0-9]+','_',user)}_{date.today().isoformat()}_{int(time.time())}.zip"
+    )
+    zip_path = os.path.join(tmpdir, zip_name)
 
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for cert in certs:
@@ -677,21 +666,27 @@ zip_path = os.path.join(tmpdir, zip_name)
 
                 ano_atual = date.today().year
                 ano_ant = ano_atual - 1
+
                 deb_a, err_a = consultar_debitos_ano(sess, ano_atual)
                 deb_b, err_b = consultar_debitos_ano(sess, ano_ant)
+
                 if err_a and err_b:
                     continue
 
                 todos = (deb_a or []) + (deb_b or [])
 
-                pasta_emp = os.path.join(tmpdir, f"{codi}_{re.sub(r'[^a-zA-Z0-9]+','_',empresa)[:30]}")
+                pasta_emp = os.path.join(
+                    tmpdir, f"{codi}_{re.sub(r'[^a-zA-Z0-9]+','_',empresa)[:30]}"
+                )
                 os.makedirs(pasta_emp, exist_ok=True)
 
                 for deb in todos:
                     try:
                         pdf_path = gerar_pdf_dare_e_extrato(sess, deb, pasta_emp)
                         if pdf_path and os.path.exists(pdf_path):
-                            arcname = os.path.join(os.path.basename(pasta_emp), os.path.basename(pdf_path))
+                            arcname = os.path.join(
+                                os.path.basename(pasta_emp), os.path.basename(pdf_path)
+                            )
                             zf.write(pdf_path, arcname=arcname)
                     except Exception:
                         pass
@@ -707,6 +702,39 @@ zip_path = os.path.join(tmpdir, zip_name)
 
     return zip_path, zip_name
 
+
+# =========================================================
+# FASTAPI
+# =========================================================
+app = FastAPI(title="API FisConforme + DARE (Render)")
+
+# ✅ CORS: libera inclusive origem "null" (HTML aberto via file://)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=".*",
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/")
+def root():
+    return {"ok": True, "date": str(date.today()), "routes": ["/health", "/fisconforme", "/dare", "/dares"]}
+
+
+@app.get("/health")
+def health():
+    return {"ok": True, "date": str(date.today())}
+
+
+@app.get("/fisconforme")
+def route_fisconforme(user: str = Query(..., description="E-mail do campo user na certifica_dfe")):
+    certs = carregar_certificados_validos(user)
+    results = [fluxo_fisconforme(c) for c in certs]
+    return {"ok": True, "user": user, "total_empresas": len(results), "results": results}
+
+
 # ✅ Rota principal do ZIP (vou manter /dare e /dares por compatibilidade)
 @app.get("/dare")
 def route_dare(user: str = Query(...), download: int = Query(1)):
@@ -720,10 +748,16 @@ def route_dare(user: str = Query(...), download: int = Query(1)):
 
     return {"ok": True, "user": user, "zip": zip_name}
 
+
 @app.get("/dares")
 def route_dares(user: str = Query(...), download: int = Query(1)):
-    # alias /dares => mesma coisa do /dare
     return route_dare(user=user, download=download)
 
+
 if __name__ == "__main__":
-    uvicorn.run("fisconforme:app", host="0.0.0.0", port=int(os.getenv("PORT", "8000")), reload=False)
+    uvicorn.run(
+        "fisconforme:app",
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", "8000")),
+        reload=False,
+    )
