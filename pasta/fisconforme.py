@@ -421,7 +421,14 @@ def carregar_html_dare_final(sess: requests.Session, url_dare: str, max_tentativ
 # =========================================================
 # PDF via Playwright (Render)
 # =========================================================
-def html_para_pdf_playwright(html: str, pdf_path: str, base_url: Optional[str] = None):
+def html_para_pdf_playwright(html: str, pdf_path: str):
+    """
+    CORREÇÃO:
+    - Removido base_url do page.set_content(), pois em algumas versões do Playwright
+      esse argumento não existe e gera:
+      'Page.set_content() got an unexpected keyword argument base_url'
+    - Você já injeta <base href="..."> no HTML e/ou absolutiza os recursos.
+    """
     os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -429,7 +436,7 @@ def html_para_pdf_playwright(html: str, pdf_path: str, base_url: Optional[str] =
             args=["--no-sandbox", "--disable-dev-shm-usage"]
         )
         page = browser.new_page()
-        page.set_content(html, wait_until="load", base_url=base_url)
+        page.set_content(html, wait_until="load")
         page.pdf(path=pdf_path, format="A4", print_background=True)
         browser.close()
 
@@ -482,7 +489,7 @@ def gerar_pdf_dare_e_extrato(sess: requests.Session, deb: Dict[str, str], pasta:
     <body>{dare_body_html}</body></html>"""
 
     tmp_dare = os.path.join(pasta, "__tmp_dare.pdf")
-    html_para_pdf_playwright(dare_html, tmp_dare, base_url=BASE_DARE)
+    html_para_pdf_playwright(dare_html, tmp_dare)
 
     if not url_ext:
         os.replace(tmp_dare, out_pdf)
@@ -499,7 +506,7 @@ def gerar_pdf_dare_e_extrato(sess: requests.Session, deb: Dict[str, str], pasta:
     <body>{ext_body_html}</body></html>"""
 
     tmp_ext = os.path.join(pasta, "__tmp_ext.pdf")
-    html_para_pdf_playwright(ext_html, tmp_ext, base_url=BASE_PORTAL)
+    html_para_pdf_playwright(ext_html, tmp_ext)
 
     merge_pdfs([tmp_dare, tmp_ext], out_pdf)
 
@@ -626,7 +633,6 @@ def gerar_zip_dares(user: str) -> Tuple[str, str, int, int, int, List[Dict[str, 
     erros_list: List[Dict[str, str]] = []
 
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        # escreve resumo/relatório sempre
         resumo = (
             f"DARES ZIP\n"
             f"User: {user}\n"
@@ -662,7 +668,6 @@ def gerar_zip_dares(user: str) -> Tuple[str, str, int, int, int, List[Dict[str, 
 
                 todos = (deb_a or []) + (deb_b or [])
                 if not todos:
-                    # sem débitos -> não é erro
                     continue
 
                 pasta_emp = os.path.join(tmpdir, f"{_slug(codi)}_{_slug(empresa)[:30]}")
@@ -697,7 +702,6 @@ def gerar_zip_dares(user: str) -> Tuple[str, str, int, int, int, List[Dict[str, 
                 except Exception:
                     pass
 
-        # grava relatório de erros dentro do zip
         if erros_list:
             linhas = []
             for e in erros_list:
@@ -706,7 +710,6 @@ def gerar_zip_dares(user: str) -> Tuple[str, str, int, int, int, List[Dict[str, 
         else:
             zf.writestr("RELATORIO_ERROS.txt", "Sem erros.\n")
 
-        # atualiza resumo final com contadores
         resumo_final = (
             f"DARES ZIP\n"
             f"User: {user}\n"
@@ -753,7 +756,6 @@ def route_dares(user: str = Query(...), download: int = Query(1)):
     try:
         zip_path, zip_name, empresas, pdfs, erros, erros_list = gerar_zip_dares(user)
         print(f"[ZIP] user={user} empresas={empresas} pdfs={pdfs} erros={erros}")
-        # se quiser ver o erro no log sempre:
         for e in erros_list[:50]:
             print("[ERRO]", e)
     except Exception as e:
