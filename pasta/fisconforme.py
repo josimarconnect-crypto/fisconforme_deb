@@ -654,9 +654,10 @@ def gerar_zip_dares(user: str) -> Tuple[str, str]:
     if not certs:
         raise RuntimeError("Nenhuma empresa para este user.")
 
-    tmpdir = tempfile.mkdtemp(prefix="dares_")
-    zip_name = f"dares_{re.sub(r'[^a-zA-Z0-9]+','_',user)}_{date.today().isoformat()}.zip"
-    zip_path = os.path.join(tmpdir, zip_name)
+tmpdir = tempfile.gettempdir()  # /tmp no Render
+zip_name = f"dares_{re.sub(r'[^a-zA-Z0-9]+','_',user)}_{date.today().isoformat()}_{int(time.time())}.zip"
+zip_path = os.path.join(tmpdir, zip_name)
+
 
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for cert in certs:
