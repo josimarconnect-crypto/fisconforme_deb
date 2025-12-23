@@ -1,22 +1,6 @@
 # fisconforme.py
-# API: /fisconforme (JSON) + /dares (ZIP com PDFs DARE+extrato)
-#
-# ✅ Pronto para Render (com Playwright headless)
-# ✅ ZIP via StreamingResponse (não “some” como FileResponse+TemporaryDirectory)
-#
-# ⚠️ SEGURANÇA (importante):
-# Não vou reimprimir suas KEYS reais aqui.
-# Coloque no Render em Environment Variables:
-#   SUPABASE_URL
-#   SUPABASE_KEY
-#   ANTICAPTCHA_KEY
-#
-# Se você insistir em “fixar no código”, substitua os os.getenv(...) pelos seus valores.
-# (Mas isso é arriscado.)
-
 import os
 import re
-import io
 import base64
 import tempfile
 import time
@@ -26,10 +10,9 @@ from typing import Dict, Any, Optional, List, Tuple
 
 import requests
 from bs4 import BeautifulSoup
-
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse
 import uvicorn
 
 # PDF no Render via Playwright (Chromium headless)
@@ -43,16 +26,18 @@ from pypdf import PdfReader, PdfWriter
 
 
 # =========================================================
-# 🔐 CONFIG (Render ENV)
+# 🔐 CONFIG FIXA (COM KEYS NO CÓDIGO, COMO VOCÊ PEDIU)
 # =========================================================
-SUPABASE_URL = os.getenv("https://hysrxadnigzqadnlkynq.supabase.co", "").strip()
-SUPABASE_KEY = os.getenv("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+SUPABASE_URL = "https://hysrxadnigzqadnlkynq.supabase.co"
+SUPABASE_KEY = (
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
     "eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh5c3J4YWRuaWd6cWFkbmxreW5xIiw"
     "icm9sZSI6ImFub24iLCJpYXQiOjE3NDM3MTQwODAsImV4cCI6MjA1OTI5MDA4MH0."
-    "RLcu44IvY4X8PLK5BOa_FL5WQ0vJA3p0t80YsGQjTrA", "").strip()
-ANTICAPTCHA_KEY = os.getenv("60ce5191cf427863d4f3c79ee20e4afe", "").strip()
+    "RLcu44IvY4X8PLK5BOa_FL5WQ0vJA3p0t80YsGQjTrA"
+)
+TABELA_CERTS = "certifica_dfe"
 
-TABELA_CERTS = os.getenv("TABELA_CERTS", "certifica_dfe").strip()
+ANTICAPTCHA_KEY = "60ce5191cf427863d4f3c79ee20e4afe"
 
 # =========================================================
 # URLs DET / PORTAL
@@ -69,15 +54,13 @@ BASE_DARE = "https://dare.sefin.ro.gov.br/"
 BASE_PORTAL = "https://portalcontribuinte.sefin.ro.gov.br/"
 
 # DARE: filtro vencimento até hoje+30
-DIAS_MAX_FUTURO_DARE = int(os.getenv("DIAS_MAX_FUTURO_DARE", "30"))
+DIAS_MAX_FUTURO_DARE = 30
 
 
 # =========================================================
 # SUPABASE
 # =========================================================
 def supabase_headers(is_json: bool = False) -> Dict[str, str]:
-    if not SUPABASE_KEY:
-        raise RuntimeError("SUPABASE_KEY não configurada no ambiente do Render.")
     h = {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -88,16 +71,9 @@ def supabase_headers(is_json: bool = False) -> Dict[str, str]:
 
 
 def carregar_certificados_validos(user_filter: str) -> List[Dict[str, Any]]:
-    if not SUPABASE_URL:
-        raise RuntimeError("SUPABASE_URL não configurada no ambiente do Render.")
     url = f"{SUPABASE_URL}/rest/v1/{TABELA_CERTS}"
-
-    # Ajuste conforme seus campos na tabela:
-    params: Dict[str, str] = {
-        "select": 'id,pem,key,empresa,codi,user,vencimento,"cnpj/cpf"'
-    }
+    params: Dict[str, str] = {'select': 'id,pem,key,empresa,codi,user,vencimento,"cnpj/cpf"'}
     params["user"] = f"eq.{user_filter}"
-
     r = requests.get(url, headers=supabase_headers(), params=params, timeout=30)
     r.raise_for_status()
     return r.json() or []
@@ -107,20 +83,13 @@ def carregar_certificados_validos(user_filter: str) -> List[Dict[str, Any]]:
 # CERT TEMP + SESSION
 # =========================================================
 def criar_arquivos_cert_temp(cert_row: Dict[str, Any]) -> Tuple[str, str]:
-    pem_b64 = cert_row.get("pem") or ""
-    key_b64 = cert_row.get("key") or ""
-    if not pem_b64 or not key_b64:
-        raise RuntimeError("Certificado inválido: pem/key vazios no Supabase.")
-
-    pem_bytes = base64.b64decode(pem_b64)
-    key_bytes = base64.b64decode(key_b64)
+    pem_bytes = base64.b64decode(cert_row.get("pem") or "")
+    key_bytes = base64.b64decode(cert_row.get("key") or "")
 
     cert_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pem")
     key_file = tempfile.NamedTemporaryFile(delete=False, suffix=".key")
-    cert_file.write(pem_bytes)
-    cert_file.close()
-    key_file.write(key_bytes)
-    key_file.close()
+    cert_file.write(pem_bytes); cert_file.close()
+    key_file.write(key_bytes); key_file.close()
     return cert_file.name, key_file.name
 
 
@@ -249,7 +218,7 @@ def obter_pendencias_fisconforme(html_fis: str) -> List[Dict[str, str]]:
         if not thead:
             continue
         header_text = " ".join(thead.stripped_strings).upper()
-        if "CÓDIGO" in header_text and "DESCRIÇÃO" in header_text:
+        if "CÓDIGO" in header_text and "DESCRIÇÃO DA PENDÊNCIA" in header_text:
             tabela_alvo = t
             break
     if not tabela_alvo:
@@ -266,11 +235,7 @@ def obter_pendencias_fisconforme(html_fis: str) -> List[Dict[str, str]]:
             continue
         codigo, ie, nome, periodo, descricao = cols[:5]
         pendencias.append({
-            "codigo": codigo,
-            "ie": ie,
-            "nome": nome,
-            "periodo": periodo,
-            "descricao": descricao
+            "codigo": codigo, "ie": ie, "nome": nome, "periodo": periodo, "descricao": descricao
         })
     return pendencias
 
@@ -297,7 +262,6 @@ def parse_data_br(s: str) -> Optional[date]:
 def obter_debitos_inscricao_estadual(html_deb: str) -> List[Dict[str, str]]:
     soup = BeautifulSoup(html_deb, "lxml")
     tabela_alvo = None
-
     for tab in soup.find_all("table"):
         ths = tab.find_all("th")
         if not ths:
@@ -305,7 +269,6 @@ def obter_debitos_inscricao_estadual(html_deb: str) -> List[Dict[str, str]]:
         if "DÉBITOS NA INSCRIÇÃO ESTADUAL" in ths[0].get_text(" ", strip=True).upper():
             tabela_alvo = tab
             break
-
     if not tabela_alvo:
         return []
 
@@ -352,19 +315,19 @@ def obter_debitos_inscricao_estadual(html_deb: str) -> List[Dict[str, str]]:
     return debitos
 
 
-def consultar_debitos_ano(sess: requests.Session, ano: int) -> Tuple[List[Dict[str, str]], Optional[str], Optional[str]]:
+def consultar_debitos_ano(sess: requests.Session, ano: int) -> Tuple[List[Dict[str, str]], Optional[str]]:
     r = sess.get(URL_CONSULTA_DEBITOS, timeout=30, allow_redirects=True)
     if r.status_code != 200:
-        return [], f"Erro HTTP {r.status_code} ao abrir Consulta de Débitos", None
+        return [], f"Erro HTTP {r.status_code} ao abrir Consulta de Débitos"
 
     soup = BeautifulSoup(r.text, "lxml")
     sel_ie = soup.find("select", {"name": "inscricaoEstadual"})
     if not sel_ie:
-        return [], "Campo inscrição estadual não encontrado", None
+        return [], "Campo inscrição estadual não encontrado"
 
     opt = sel_ie.find("option")
     if not opt or not opt.get("value"):
-        return [], "Nenhuma inscrição estadual disponível", None
+        return [], "Nenhuma inscrição estadual disponível"
 
     ie_val = opt["value"].strip()
     tipo_devedor = (soup.find("input", {"name": "tipoDevedor"}) or {}).get("value", "1")
@@ -378,19 +341,15 @@ def consultar_debitos_ano(sess: requests.Session, ano: int) -> Tuple[List[Dict[s
 
     r2 = sess.post(URL_CONSULTA_DEBITOS_LISTA, data=payload, timeout=30, allow_redirects=True)
     if r2.status_code != 200:
-        return [], f"Erro HTTP {r2.status_code} ao consultar lista (ano {ano})", None
+        return [], f"Erro HTTP {r2.status_code} ao consultar lista (ano {ano})"
 
-    return obter_debitos_inscricao_estadual(r2.text), None, r2.text
+    return obter_debitos_inscricao_estadual(r2.text), None
 
 
 # =========================================================
 # CAPTCHA DARE
 # =========================================================
 def resolver_captcha_automatico(img_bytes: bytes) -> Optional[str]:
-    if not ANTICAPTCHA_KEY:
-        # Sem anti-captcha, não resolve captcha automático
-        return None
-
     with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_file:
         tmp_file.write(img_bytes)
         img_path = tmp_file.name
@@ -433,7 +392,7 @@ def carregar_html_dare_final(sess: requests.Session, url_dare: str, max_tentativ
 
         captcha_resp = resolver_captcha_automatico(img_bytes)
         if not captcha_resp:
-            time.sleep(1.5)
+            time.sleep(1.2)
             continue
 
         data: Dict[str, str] = {}
@@ -492,19 +451,16 @@ def absolutizar_recursos(html_fragment: str, base_url: str) -> str:
 
 def merge_pdfs(pdf_paths: List[str], output_path: str):
     writer = PdfWriter()
-    for pth in pdf_paths:
-        if not os.path.exists(pth):
+    for p in pdf_paths:
+        if not os.path.exists(p):
             continue
-        reader = PdfReader(pth)
-        for pg in reader.pages:
-            writer.add_page(pg)
+        reader = PdfReader(p)
+        for page in reader.pages:
+            writer.add_page(page)
     with open(output_path, "wb") as f:
         writer.write(f)
 
 
-# =========================================================
-# GERA DARE+EXTRATO PDF
-# =========================================================
 def gerar_pdf_dare_e_extrato(sess: requests.Session, deb: Dict[str, str], pasta: str) -> Optional[str]:
     venc = (deb.get("data_vencimento") or "").strip()
     venc_date = parse_data_br(venc)
@@ -514,7 +470,7 @@ def gerar_pdf_dare_e_extrato(sess: requests.Session, deb: Dict[str, str], pasta:
             return None
 
     url_dare = (deb.get("url_dare") or "").strip()
-    url_ext = (deb.get("url_extrato") or "").strip()
+    url_ext  = (deb.get("url_extrato") or "").strip()
     if not url_dare:
         return None
 
@@ -552,10 +508,10 @@ def gerar_pdf_dare_e_extrato(sess: requests.Session, deb: Dict[str, str], pasta:
 
     merge_pdfs([tmp_dare, tmp_ext], out_pdf)
 
-    for pth in (tmp_dare, tmp_ext):
+    for p in (tmp_dare, tmp_ext):
         try:
-            if os.path.exists(pth):
-                os.remove(pth)
+            if os.path.exists(p):
+                os.remove(p)
         except Exception:
             pass
 
@@ -563,7 +519,7 @@ def gerar_pdf_dare_e_extrato(sess: requests.Session, deb: Dict[str, str], pasta:
 
 
 # =========================================================
-# FLUXO (FISCONFORME + DÉBITOS) JSON
+# FLUXO FISCONFORME (JSON)
 # =========================================================
 def fluxo_fisconforme(cert_row: Dict[str, Any]) -> Dict[str, Any]:
     empresa = cert_row.get("empresa") or ""
@@ -619,9 +575,9 @@ def fluxo_fisconforme(cert_row: Dict[str, Any]) -> Dict[str, Any]:
         except Exception as e:
             res["erro_fisconforme"] = str(e)
 
-        # Débitos (JSON: ano atual)
+        # Débitos (ano atual no JSON)
         try:
-            debitos, err, _ = consultar_debitos_ano(sess, date.today().year)
+            debitos, err = consultar_debitos_ano(sess, date.today().year)
             if err:
                 res["erro_debitos"] = err
             else:
@@ -668,32 +624,24 @@ def fluxo_fisconforme(cert_row: Dict[str, Any]) -> Dict[str, Any]:
 # =========================================================
 app = FastAPI(title="API FisConforme + DARE (Render)")
 
+# ✅ CORS: libera inclusive origem "null" (HTML aberto via file://)
+# (allow_origin_regex pega qualquer Origin)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origin_regex=".*",
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
-# -----------------------------
-# ✅ ROTAS
-# -----------------------------
 @app.get("/")
 def root():
-    return {
-        "ok": True,
-        "service": "fisconforme+dares",
-        "routes": ["/health", "/fisconforme?user=EMAIL", "/dares?user=EMAIL"],
-    }
-
+    # simples — útil pra você testar no browser
+    return {"ok": True, "date": str(date.today()), "routes": ["/health", "/fisconforme", "/dare", "/dares"]}
 
 @app.get("/health")
 def health():
-    # útil pro Render Health Check
-    return {"ok": True, "date": date.today().isoformat()}
-
+    return {"ok": True, "date": str(date.today())}
 
 @app.get("/fisconforme")
 def route_fisconforme(user: str = Query(..., description="E-mail do campo user na certifica_dfe")):
@@ -701,23 +649,16 @@ def route_fisconforme(user: str = Query(..., description="E-mail do campo user n
     results = [fluxo_fisconforme(c) for c in certs]
     return {"ok": True, "user": user, "total_empresas": len(results), "results": results}
 
-
-@app.get("/dares")
-def route_dares_zip(
-    user: str = Query(..., description="E-mail do campo user na certifica_dfe"),
-):
-    """
-    Gera ZIP com PDFs DARE (+ extrato quando existir)
-    Consulta 2 anos: atual + anterior
-    Filtra DARE com vencimento > hoje + DIAS_MAX_FUTURO_DARE (default 30) => ignora
-    Retorno: StreamingResponse (não depende de arquivo em disco)
-    """
+def gerar_zip_dares(user: str) -> Tuple[str, str]:
     certs = carregar_certificados_validos(user)
     if not certs:
-        return JSONResponse({"ok": True, "user": user, "msg": "Nenhuma empresa para este user.", "zip": None})
+        raise RuntimeError("Nenhuma empresa para este user.")
 
-    mem = io.BytesIO()
-    with zipfile.ZipFile(mem, "w", zipfile.ZIP_DEFLATED) as zf:
+    tmpdir = tempfile.mkdtemp(prefix="dares_")
+    zip_name = f"dares_{re.sub(r'[^a-zA-Z0-9]+','_',user)}_{date.today().isoformat()}.zip"
+    zip_path = os.path.join(tmpdir, zip_name)
+
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for cert in certs:
             empresa = (cert.get("empresa") or "empresa").strip()
             codi = str(cert.get("codi") or "0").strip()
@@ -735,25 +676,24 @@ def route_dares_zip(
 
                 ano_atual = date.today().year
                 ano_ant = ano_atual - 1
-                deb_a, err_a, _ = consultar_debitos_ano(sess, ano_atual)
-                deb_b, err_b, _ = consultar_debitos_ano(sess, ano_ant)
+                deb_a, err_a = consultar_debitos_ano(sess, ano_atual)
+                deb_b, err_b = consultar_debitos_ano(sess, ano_ant)
                 if err_a and err_b:
                     continue
 
                 todos = (deb_a or []) + (deb_b or [])
 
-                # gera PDFs em pasta temporária e coloca dentro do ZIP
-                with tempfile.TemporaryDirectory() as pasta_tmp:
-                    pasta_nome = f"{codi}_{re.sub(r'[^a-zA-Z0-9]+','_',empresa)[:30]}"
-                    for deb in todos:
-                        try:
-                            pdf_path = gerar_pdf_dare_e_extrato(sess, deb, pasta_tmp)
-                            if pdf_path and os.path.exists(pdf_path):
-                                arcname = f"{pasta_nome}/{os.path.basename(pdf_path)}"
-                                with open(pdf_path, "rb") as f:
-                                    zf.writestr(arcname, f.read())
-                        except Exception:
-                            pass
+                pasta_emp = os.path.join(tmpdir, f"{codi}_{re.sub(r'[^a-zA-Z0-9]+','_',empresa)[:30]}")
+                os.makedirs(pasta_emp, exist_ok=True)
+
+                for deb in todos:
+                    try:
+                        pdf_path = gerar_pdf_dare_e_extrato(sess, deb, pasta_emp)
+                        if pdf_path and os.path.exists(pdf_path):
+                            arcname = os.path.join(os.path.basename(pasta_emp), os.path.basename(pdf_path))
+                            zf.write(pdf_path, arcname=arcname)
+                    except Exception:
+                        pass
 
             finally:
                 try:
@@ -764,18 +704,25 @@ def route_dares_zip(
                 except Exception:
                     pass
 
-    mem.seek(0)
-    safe_user = re.sub(r"[^a-zA-Z0-9]+", "_", user)
-    filename = f"dares_{safe_user}_{date.today().isoformat()}.zip"
-    return StreamingResponse(
-        mem,
-        media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
-    )
+    return zip_path, zip_name
 
+# ✅ Rota principal do ZIP (vou manter /dare e /dares por compatibilidade)
+@app.get("/dare")
+def route_dare(user: str = Query(...), download: int = Query(1)):
+    try:
+        zip_path, zip_name = gerar_zip_dares(user)
+    except Exception as e:
+        return JSONResponse({"ok": False, "user": user, "error": str(e)})
 
-# =========================================================
-# MAIN
-# =========================================================
+    if download == 1:
+        return FileResponse(zip_path, media_type="application/zip", filename=zip_name)
+
+    return {"ok": True, "user": user, "zip": zip_name}
+
+@app.get("/dares")
+def route_dares(user: str = Query(...), download: int = Query(1)):
+    # alias /dares => mesma coisa do /dare
+    return route_dare(user=user, download=download)
+
 if __name__ == "__main__":
     uvicorn.run("fisconforme:app", host="0.0.0.0", port=int(os.getenv("PORT", "8000")), reload=False)
